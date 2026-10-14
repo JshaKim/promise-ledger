@@ -178,14 +178,14 @@ test('labels follow contract type', () => {
 test('shareable facts never include private notes or free text', async () => {
   const secret = '소사장 욕설 들음 — 비공개';
   const chain = await build([
-    ['promise.create', { id: 'p1', site: '오창 2라인', counterpart: '○○테크', rate: 300000, rateUnit: 'day', contractType: 'service', payRule: 'once', payDate: '2026-10-10' }],
+    ['promise.create', { id: 'p1', site: '오창 2라인', counterpart: '○○테크', phone: '010-1234-5678', rate: 300000, rateUnit: 'day', contractType: 'service', payRule: 'once', payDate: '2026-10-10' }],
     close('2026-10-01'),
     ['note.private', { promiseId: 'p1', date: '2026-10-01', text: secret }],
     ['contact.attempt', { promiseId: 'p1', date: '2026-10-12', channel: 'phone', answered: false }],
   ]);
   const facts = shareableFacts('p1', chain, '2026-10-15');
   const s = JSON.stringify(facts);
-  assert.ok(!s.includes(secret)); assert.ok(!s.includes('오창'));
+  assert.ok(!s.includes(secret)); assert.ok(!s.includes('오창')); assert.ok(!s.includes('1234'));
   assert.deepEqual(facts.arrears, { label: '대금 체불', days: 5, shortfall: 300000 });
   assert.ok(PRIVATE_TYPES.has('note.private'));
 });

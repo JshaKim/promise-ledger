@@ -93,6 +93,9 @@ with sync_playwright() as p:
             page.click('button[data-contact="0"]')
             page.wait_for_selector('text=연락 시도 2회 무응답', timeout=5000)
             check('contact attempts counted', '연락 시도 2회 무응답' in page.inner_text('#view'))
+            page.click('#add-phone'); page.wait_for_selector('a[href^="tel:"]', timeout=5000)
+            check('number added later shows call link', page.get_attribute('a[href^="tel:"]', 'href') == 'tel:200000')
+            check('adding a number keeps the chain valid', '변조 없음' in page.inner_text('#chain-status'))
             page.screenshot(path=str(out / 'light-2-pay.png'), full_page=True)
 
             # correction keeps chain valid and changes the amount
@@ -103,6 +106,7 @@ with sync_playwright() as p:
             # proof
             page.click('button[data-tab=proof]')
             txt = page.inner_text('#view')
+            check('evidence shows the added number', '상대 연락처' in txt and '200000' in txt)
             check('evidence alert line', '대금 체불 4일차' in txt and '연락 시도 2회 무응답' in txt, txt[:300])
             check('backfilled closes marked 사후 기록', txt.count('사후 기록') == 2, str(txt.count('사후 기록')))
             check('private note hidden by default', '따로 먹으라고' not in txt)
@@ -139,9 +143,10 @@ with sync_playwright() as p:
             check('25 hours refused', '일한 시간(0~24)' in page.inner_text('#view'))
 
             # pay-date timing: before -> no question/no red line; on the day -> question, neutral remainder
-            def promise_with_payday(name, paydate):
+            def promise_with_payday(name, paydate, phone=''):
                 page.click('button[data-tab=promises]')
                 page.fill('#f-site', name); page.fill('#f-counterpart', name); page.fill('#f-rate', '100000')
+                if phone: page.fill('#f-phone', phone)
                 page.fill('#f-paydate', paydate); page.fill('#f-start', d(1))
                 page.click('#do-promise'); page.wait_for_selector('#do-close', timeout=5000)
                 page.fill('#close-date', d(0)); page.dispatch_event('#close-date', 'change')
@@ -150,10 +155,15 @@ with sync_playwright() as p:
                 page.click('#do-close'); page.wait_for_selector('.done', timeout=5000)
                 page.click('button[data-tab=pay]')
                 return page.inner_text('#view')
-            txt = promise_with_payday('미래지급', d(-30))
-            check('before pay date: no question, no red shortfall', '약속한 돈 받으셨나요' not in txt and '못 받은 돈' not in txt and '받을 예정' in txt and '여쭤볼게요' in txt, txt[:300])
+            txt = promise_with_payday('미래무번호', d(-30))
+            check('before pay date, no phone: no contact box', '연락 시도' not in txt and '상대 연락처' not in txt, txt[-200:])
+            txt = promise_with_payday('미래지급', d(-30), '010-2222-3333')
+            check('before pay date with phone: number only, no attempt log', '010-2222-3333' in txt and '응답 없음' not in txt and '연락 시도' not in txt, txt[-250:])
+            check('call link dials the number', page.get_attribute('a[href^="tel:"]', 'href') == 'tel:01022223333')
             page.screenshot(path=str(out / 'light-4-before-due.png'), full_page=True)
+            check('before pay date: no question, no red shortfall', '약속한 돈 받으셨나요' not in txt and '못 받은 돈' not in txt and '받을 예정' in txt and '여쭤볼게요' in txt, txt[:300])
             txt = promise_with_payday('오늘지급', d(0))
+            check('on pay date without phone: attempt log + add-number button', '연락 시도' in txt and '상대 연락처 적기' in txt, txt[-250:])
             check('on pay date: question shown, remainder neutral', '약속한 돈 받으셨나요' in txt and '남은 돈' in txt and '못 받은 돈' not in txt and '체불' not in txt, txt[:300])
 
             # tamper: edit event #3 directly in IndexedDB, reload -> must be flagged

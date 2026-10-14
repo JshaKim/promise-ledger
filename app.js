@@ -106,6 +106,10 @@ function statusChip(p) {
   return `<span class="chip muted">기록 없음</span>`;
 }
 
+// keep digits, +, - only; empty -> undefined so it is not stored
+const cleanPhone = s => { const t = String(s || '').replace(/[^\d+-]/g, ''); return t || undefined; };
+const dialable = ph => String(ph).replace(/[^\d+]/g, '');
+
 const CONTRACT_LABEL = { labor: '근로 (지시받아 일함)', service: '용역·도급 (일을 맡아 완성)', unknown: '모름' };
 const METHOD_LABEL = { transfer: '계좌이체', cash: '현금', other: '기타' };
 
@@ -240,6 +244,7 @@ function viewPromises() {
     <p class="sub">말로만 한 약속이라도 그대로 적어 두세요. 적은 날짜와 시각이 함께 남습니다.</p>
     <label class="field">현장 (예: 오창 2라인 셋업)<input id="f-site" autocomplete="off"></label>
     <label class="field">상대 (업체명 또는 소사장 이름)<input id="f-counterpart" autocomplete="off"></label>
+    <label class="field">상대 연락처 (선택)<input id="f-phone" type="tel" inputmode="tel" autocomplete="off" placeholder="010-0000-0000"></label>
     <div class="two">
       <label class="field">단가 (원)<input id="f-rate" type="number" min="0" step="1000" inputmode="numeric"></label>
       <label class="field">기준<select id="f-unit"><option value="day">일당</option><option value="hour">시급</option></select></label>
@@ -285,7 +290,7 @@ bind.promises = view => {
     const counterpart = v('#f-counterpart'), rate = Number(v('#f-rate')), payRule = v('#f-payrule');
     if (!counterpart) errs.push('상대');
     if (!(rate > 0)) errs.push('단가');
-    const data = { id: crypto.randomUUID(), site: v('#f-site'), counterpart, rate, rateUnit: v('#f-unit'),
+    const data = { id: crypto.randomUUID(), site: v('#f-site'), counterpart, phone: cleanPhone(v('#f-phone')), rate, rateUnit: v('#f-unit'),
       contractType: v('#f-contract'), payRule, method: v('#f-method'), startDate: v('#f-start') };
     if (payRule === 'monthly') { data.payDay = Number(v('#f-payday')); if (!(data.payDay >= 1 && data.payDay <= 31)) errs.push('매월 지급일(1~31)'); }
     else { data.payDate = v('#f-paydate'); if (!data.payDate) errs.push('지급일'); }
@@ -349,16 +354,29 @@ function viewPay() {
     <li><div class="spread"><span>${esc(fmtTs(e.ts).slice(0, 10))} · ${e.data.result === 'none' ? '못 받음' : won(e.data.amount) + ' 받음'}${e.corrected ? ' <span class="chip muted">정정됨</span>' : ''}</span>
       <button class="btn ghost small noprint" data-fix="${e.seq}">정정</button></div></li>`).join('')}</ul>
     <p class="sub">잘못 적은 기록은 지워지지 않습니다. 정정하면 정정했다는 기록이 함께 남습니다.</p></div>` : ''}
+  ${contactCard(p, obs, c)}
+  ${ui.msg || ''}`;
+}
+
+// Before any pay date: only the counterpart's number (if known). From the first pay date: the attempt log too.
+function contactCard(p, obs, c) {
+  const due = obs.some(o => today() >= o.dueDate) || c.noAnswerCount > 0;
+  const phoneLine = p.phone
+    ? `<div class="spread"><span class="money">${esc(p.phone)}</span>
+         <span class="row"><a class="btn ghost small" href="tel:${esc(dialable(p.phone))}">전화</a><a class="btn ghost small" href="sms:${esc(dialable(p.phone))}">문자</a></span></div>`
+    : `<button class="btn ghost small noprint" id="add-phone">상대 연락처 적기</button>`;
+  if (!due) return p.phone ? `<div class="card"><h2>상대 연락처</h2>${phoneLine}</div>` : '';
+  return `
   <div class="card">
     <h2>연락 시도</h2>
+    ${phoneLine}
     <div class="row">${c.noAnswerCount ? `<span class="chip bad">연락 시도 ${c.noAnswerCount}회 무응답</span>` : ''}${c.silentDays ? `<span class="chip bad">연락 두절 ${c.silentDays}일</span>` : ''}${!c.noAnswerCount ? '<span class="sub">기록 없음</span>' : ''}</div>
     <div class="two">
       <label class="field">수단<select id="c-channel"><option value="phone">전화</option><option value="sms">문자</option><option value="kakao">카카오톡</option><option value="visit">방문</option></select></label>
       <label class="field">날짜<input type="date" id="c-date" value="${today()}" max="${today()}"></label>
     </div>
     <div class="row"><button class="btn ghost small" data-contact="0">응답 없음</button><button class="btn ghost small" data-contact="1">응답 있음</button></div>
-  </div>
-  ${ui.msg || ''}`;
+  </div>`;
 }
 
 bind.pay = view => {
@@ -388,6 +406,13 @@ bind.pay = view => {
       data: { ...target.data, amount, result: amount === 0 ? 'none' : target.data.result === 'none' ? 'partial' : target.data.result } } });
     renderStatus(); render();
   })));
+  view.querySelector('#add-phone')?.addEventListener('click', guarded(async () => {
+    const phone = cleanPhone(prompt('상대 연락처를 적어 주세요.'));
+    if (!phone) return;
+    const target = effectiveEvents(chain).find(e => e.type === 'promise.create' && e.data.id === ui.promiseId);
+    await append('correction', { targetSeq: target.seq, replacement: { type: 'promise.create', data: { ...target.data, phone } } });
+    renderStatus(); render();
+  }));
   view.querySelectorAll('[data-contact]').forEach(b => b.addEventListener('click', guarded(async () => {
     await append('contact.attempt', { promiseId: ui.promiseId, date: view.querySelector('#c-date').value || today(),
       channel: view.querySelector('#c-channel').value, answered: b.dataset.contact === '1' });
@@ -461,6 +486,7 @@ function evidenceDoc(pid, includeNotes) {
     <table><tbody>
       <tr><th>현장</th><td>${esc(p.site || '')}</td></tr>
       <tr><th>상대</th><td>${esc(p.counterpart)}</td></tr>
+      ${p.phone ? `<tr><th>상대 연락처</th><td>${esc(p.phone)}</td></tr>` : ''}
       <tr><th>단가</th><td>${p.rateUnit === 'hour' ? '시급' : '일당'} ${won(p.rate)}</td></tr>
       <tr><th>지급 약속</th><td>${p.payRule === 'monthly' ? `매월 ${p.payDay}일 (전월 근무분)` : esc(p.payDate)} · ${esc(METHOD_LABEL[p.method] || '')}</td></tr>
       <tr><th>일하는 방식 (본인 기재)</th><td>${esc(CONTRACT_LABEL[p.contractType])}</td></tr>
