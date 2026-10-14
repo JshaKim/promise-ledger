@@ -245,7 +245,7 @@ function viewPromises() {
       <label class="field">기준<select id="f-unit"><option value="day">일당</option><option value="hour">시급</option></select></label>
     </div>
     <label class="field">일하는 방식
-      <select id="f-contract">${Object.entries(CONTRACT_LABEL).map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
+      <select id="f-contract">${Object.entries(CONTRACT_LABEL).map(([v, l]) => `<option value="${v}" ${v === 'unknown' ? 'selected' : ''}>${l}</option>`).join('')}</select>
     </label>
     <p class="sub">근로면 못 받은 돈이 <b>임금 체불</b>(노동청), 용역·도급이면 <b>대금 체불</b>(지급명령)로 표시됩니다. 모르면 "모름"으로 두세요.</p>
     <div class="two">
@@ -292,6 +292,7 @@ bind.promises = view => {
     if (errs.length) { ui.msg = `<p class="err">빠진 항목: ${errs.join(', ')}</p>`; return render(); }
     await append('promise.create', data);
     ui.msg = ''; ui.promiseId = data.id; tab = 'today';
+    ui.answers = {}; ui.hours = ''; ui.closeDate = '';   // a new promise starts with a clean close form
     renderStatus(); render();
   }));
   view.querySelectorAll('[data-end]').forEach(b => b.addEventListener('click', guarded(async () => {
@@ -323,10 +324,19 @@ function viewPay() {
         : `<span class="chip bad">${label} ${o.overdueDays}일차</span>`}
     </div>
     <div class="spread"><span class="sub">근무 ${o.workedDays}일${p.rateUnit === 'hour' ? ` · ${o.units}시간` : ''} · 지급일 ${esc(o.dueDate)}</span></div>
-    <div class="spread"><span>받을 돈</span><span class="money big">${won(o.amountDue)}</span></div>
-    <div class="spread"><span>받은 돈</span><span class="money">${won(o.received)}</span></div>
-    ${o.shortfall ? `<div class="spread"><span>못 받은 돈</span><span class="money" style="color:var(--bad);font-weight:700">${won(o.shortfall)}</span></div>` : ''}
-    ${o.status !== 'paid' ? `
+    ${(() => {
+      // before the pay date nothing is owed yet: no question, no red line
+      const t = today();
+      const before = t < o.dueDate, onDay = t === o.dueDate;
+      return `
+    <div class="spread"><span>${before ? '받을 예정' : '받을 돈'}</span><span class="money big">${won(o.amountDue)}</span></div>
+    ${!before || o.received ? `<div class="spread"><span>받은 돈</span><span class="money">${won(o.received)}</span></div>` : ''}
+    ${o.shortfall && !before ? (onDay
+      ? `<div class="spread"><span>남은 돈</span><span class="money">${won(o.shortfall)}</span></div>`
+      : `<div class="spread"><span>못 받은 돈</span><span class="money" style="color:var(--bad);font-weight:700">${won(o.shortfall)}</span></div>`) : ''}
+    ${before ? `<p class="sub">지급일(${esc(o.dueDate)})이 되면 받았는지 여쭤볼게요.</p>` : ''}`;
+    })()}
+    ${o.status !== 'paid' && today() >= o.dueDate ? `
     <div class="q noprint"><span>약속한 돈 받으셨나요?</span>
       <div class="row">
         <button class="btn small" data-pay="full" data-period="${esc(o.period)}">전액 받음</button>

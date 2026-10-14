@@ -40,6 +40,7 @@ with sync_playwright() as p:
             page.fill('#f-site', '오창 2라인 셋업')
             page.fill('#f-counterpart', '○○테크 김사장')
             page.fill('#f-rate', '300000')
+            check('contract type defaults to 모름', page.input_value('#f-contract') == 'unknown')
             page.select_option('#f-contract', 'service')
             page.fill('#f-paydate', d(4))
             page.fill('#f-start', d(7))
@@ -136,6 +137,24 @@ with sync_playwright() as p:
                 page.click(f'.choices[data-q={key}] .choice[data-v={val}]')
             page.click('#do-close'); page.wait_for_selector('.err', timeout=5000)
             check('25 hours refused', '일한 시간(0~24)' in page.inner_text('#view'))
+
+            # pay-date timing: before -> no question/no red line; on the day -> question, neutral remainder
+            def promise_with_payday(name, paydate):
+                page.click('button[data-tab=promises]')
+                page.fill('#f-site', name); page.fill('#f-counterpart', name); page.fill('#f-rate', '100000')
+                page.fill('#f-paydate', paydate); page.fill('#f-start', d(1))
+                page.click('#do-promise'); page.wait_for_selector('#do-close', timeout=5000)
+                page.fill('#close-date', d(0)); page.dispatch_event('#close-date', 'change')
+                for key, val in [('schedule', 'as_promised'), ('workState', 'done'), ('info', 'ontime'), ('safety', 'yes'), ('treatment', 'none')]:
+                    page.click(f'.choices[data-q={key}] .choice[data-v={val}]')
+                page.click('#do-close'); page.wait_for_selector('.done', timeout=5000)
+                page.click('button[data-tab=pay]')
+                return page.inner_text('#view')
+            txt = promise_with_payday('미래지급', d(-30))
+            check('before pay date: no question, no red shortfall', '약속한 돈 받으셨나요' not in txt and '못 받은 돈' not in txt and '받을 예정' in txt and '여쭤볼게요' in txt, txt[:300])
+            page.screenshot(path=str(out / 'light-4-before-due.png'), full_page=True)
+            txt = promise_with_payday('오늘지급', d(0))
+            check('on pay date: question shown, remainder neutral', '약속한 돈 받으셨나요' in txt and '남은 돈' in txt and '못 받은 돈' not in txt and '체불' not in txt, txt[:300])
 
             # tamper: edit event #3 directly in IndexedDB, reload -> must be flagged
             page.evaluate("""() => new Promise((res, rej) => {
