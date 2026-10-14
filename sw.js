@@ -1,5 +1,5 @@
 // Offline cache for the app shell. Records live in IndexedDB, not here.
-const CACHE = 'promise-ledger-v1';
+const CACHE = 'promise-ledger-v2';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'core.js', 'manifest.json', 'icon.svg'];
 
 self.addEventListener('install', e => {

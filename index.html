@@ -3,30 +3,43 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#1f3a52">
+<meta name="theme-color" content="#f2f3f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#101214" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="약속장부">
 <title>약속장부</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="top">
-  <div class="brand">약속장부</div>
-  <div id="chain-status" class="chain">확인 중…</div>
+<header class="appbar">
+  <h1 id="page-title">오늘</h1>
+  <div id="chain-status" class="chain-pill" role="status">확인 중</div>
 </header>
-
-<nav class="tabs" role="tablist">
-  <button role="tab" data-tab="today" aria-selected="true">오늘 마감</button>
-  <button role="tab" data-tab="promises">약속</button>
-  <button role="tab" data-tab="pay">지급</button>
-  <button role="tab" data-tab="proof">증빙</button>
-</nav>
 
 <main id="view" class="view"></main>
 
-<footer class="foot">
-  기록은 이 폰 안에만 저장됩니다. 서버로 보내지 않습니다.
-</footer>
+<nav class="tabbar" aria-label="화면 전환">
+  <button data-tab="today" aria-current="page">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/><path d="M9 14.5l2 2 4-4"/></svg>
+    <span>오늘</span>
+  </button>
+  <button data-tab="promises">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h8l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 6 19V5a1.5 1.5 0 0 1 1-1.5z"/><path d="M15 3.5V8h4M9.5 12.5h6M9.5 16h4"/></svg>
+    <span>약속</span>
+  </button>
+  <button data-tab="pay">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="19" height="13" rx="3"/><path d="M2.5 10.5h19"/><path d="M6.5 15h4"/></svg>
+    <span>지급</span>
+  </button>
+  <button data-tab="proof">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8-7.5 9.5-4.3-1.5-7.5-4.9-7.5-9.5V6z"/><path d="M8.8 12l2.2 2.2 4.3-4.4"/></svg>
+    <span>증빙</span>
+  </button>
+</nav>
 
 <script type="module" src="app.js"></script>
 </body>

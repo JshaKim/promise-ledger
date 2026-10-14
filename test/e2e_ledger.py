@@ -12,159 +12,194 @@ threading.Thread(target=srv.serve_forever, daemon=True).start()
 today = dt.date.today()
 d = lambda n: (today - dt.timedelta(days=n)).isoformat()
 results, errors = [], []
+WIDTH = 390
 
 def check(name, cond, detail=''):
     results.append((name, bool(cond), detail))
 
+ALL_OK = [('schedule', 'as_promised'), ('workState', 'done'), ('info', 'ontime'), ('safety', 'yes')]
+ALL_BAD = [('schedule', 'changed_sameday'), ('workState', 'waiting'), ('info', 'late'), ('safety', 'partial')]
+
 with sync_playwright() as p:
     b = p.chromium.launch()
     for scheme in ['light', 'dark']:
-        ctx = b.new_context(viewport={'width': 390, 'height': 844}, color_scheme=scheme, locale='ko-KR', timezone_id='Asia/Seoul')
+        ctx = b.new_context(viewport={'width': WIDTH, 'height': 844}, color_scheme=scheme, locale='ko-KR', timezone_id='Asia/Seoul')
         page = ctx.new_page()
         page.on('console', lambda m: m.type == 'error' and errors.append(m.text))
         page.on('pageerror', lambda e: errors.append(str(e)))
-        dialogs = []
-        def on_dialog(dl):
-            dialogs.append((dl.type, dl.message))
-            dl.accept('200000' if dl.type == 'prompt' else None)
-        page.on('dialog', on_dialog)
         page.goto('http://127.0.0.1:8811/index.html')
         page.wait_for_selector('#view .card')
-        if scheme == 'light':
-            check('empty state guides to 약속 tab', '약속' in page.inner_text('#view'))
+        view = lambda: page.inner_text('#view')
 
-            # create a promise: 30만/day, service, paid once 4 days ago
+        def open_form():
             page.click('button[data-tab=promises]')
-            page.click('#do-promise')
-            check('promise form rejects missing fields', '빠진 항목' in page.inner_text('#view'))
-            page.fill('#f-site', '오창 2라인 셋업')
-            page.fill('#f-counterpart', '○○테크 김사장')
-            page.fill('#f-rate', '300000')
-            check('contract type defaults to 모름', page.input_value('#f-contract') == 'unknown')
-            page.select_option('#f-contract', 'service')
-            page.fill('#f-paydate', d(4))
-            page.fill('#f-start', d(7))
-            page.click('#do-promise')
-            page.wait_for_selector('#do-close', timeout=5000)
-            check('after saving, app moves to 오늘 마감', page.get_attribute('button[data-tab=today]', 'aria-selected') == 'true')
+            if page.query_selector('#new-promise'):
+                page.click('#new-promise')
+            page.wait_for_selector('#do-promise')
 
-            # close without answers -> error
+        def create_promise(site, counterpart, rate, paydate, start, contract='service', unit='day', phone=''):
+            open_form()
+            page.fill('#f-site', site); page.fill('#f-counterpart', counterpart)
+            if phone: page.fill('#f-phone', phone)
+            if unit != 'day': page.click(f'[data-seg=unit] [data-v={unit}]')
+            page.fill('#f-rate', str(rate))
+            page.fill('#f-paydate', paydate)
+            page.click(f'[data-seg=contract] [data-v={contract}]')
+            page.fill('#f-start', start)
+            page.click('#do-promise')
+            page.wait_for_selector('.flowhead', timeout=5000)
+
+        def close_day(date, singles, multi, note='', hours=None):
+            page.fill('#close-date', date); page.dispatch_event('#close-date', 'change')
+            if hours is not None:
+                page.fill('#close-hours', str(hours)); page.click('#step-next')
+            for key, val in singles:
+                page.click(f'.choices[data-q={key}] .opt[data-v={val}]')
+            for v in multi:
+                page.click(f'.choices[data-q=treatment] .opt[data-v={v}]')
+            page.click('#step-next')
+            if note: page.fill('#close-note', note)
             page.click('#do-close')
-            check('close requires all answers', '아직 답하지 않은 항목' in page.inner_text('#view'))
+            page.wait_for_selector('.donecard', timeout=5000)
 
-            def close_day(date, note=''):
-                page.fill('#close-date', date); page.dispatch_event('#close-date', 'change')
-                for key, val in [('schedule', 'changed_sameday'), ('workState', 'waiting'), ('info', 'late'), ('safety', 'partial')]:
-                    page.click(f'.choices[data-q={key}] .choice[data-v={val}]')
-                page.click('.choices[data-q=treatment] .choice[data-v=rest]')
-                page.click('.choices[data-q=treatment] .choice[data-v=info]')
-                if note: page.fill('#close-note', note)
-                page.click('#do-close')
-                page.wait_for_selector('.done', timeout=5000)
-            # a date before the start date is refused
+        if scheme == 'light':
+            check('empty state invites the first promise', '첫 약속 적기' in view())
+            page.screenshot(path=str(out / 'light-0-empty.png'))
+            page.click('#go-new'); page.wait_for_selector('#do-promise')
+            page.click('#do-promise')
+            check('promise form rejects missing fields', '빠진 항목' in view())
+            check('contract type defaults to 모름', page.query_selector('[data-seg=contract] [data-v=unknown][aria-pressed=true]') is not None)
+            page.screenshot(path=str(out / 'light-1-form.png'), full_page=True)
+
+            create_promise('오창 2라인 셋업', '○○테크 김사장', 300000, d(4), d(7))
+            check('after saving, app moves to 오늘', page.get_attribute('button[data-tab=today]', 'aria-current') == 'page')
+            check('hero shows the arrears state is not yet there (no closes)', '아직 근무 기록 없음' in view())
+
+            # a fast double tap on an answer must not skip the next question
+            page.evaluate("() => { const b = document.querySelector('.choices[data-q=schedule] .opt[data-v=as_promised]'); b.click(); b.click(); }")
+            page.wait_for_selector('.step[data-step=workState]', timeout=5000)
+            page.wait_for_timeout(400)
+            check('double tap on an answer does not skip a question', page.query_selector('.step[data-step=workState]') is not None)
+            page.click('#step-back'); page.wait_for_selector('.step[data-step=schedule]')
+
+            # Codex UI round 1: a date chip keeps the answers; a chip tapped inside the 160 ms advance window cancels the advance
+            page.click('.datechips [data-date]:nth-of-type(2)')   # 어제
+            page.wait_for_timeout(200)
+            check('date chip keeps answers given so far', page.query_selector('.choices[data-q=schedule] .opt[data-v=as_promised][aria-pressed=true]') is not None)
+            page.click('.datechips [data-date]:nth-of-type(1)')   # back to 오늘
+            page.evaluate("() => { document.querySelector('.choices[data-q=schedule] .opt[data-v=changed_notice]').click(); document.querySelectorAll('.datechips [data-date]')[1].click(); }")
+            page.wait_for_timeout(400)
+            check('date change inside the advance window does not skip a question', page.query_selector('.step[data-step=schedule]') is not None)
+            while page.query_selector('#step-back'):   # recover so a failure above is reported, not a crash
+                page.click('#step-back')
+            page.click('.datechips [data-date]:nth-of-type(1)')
+
+            # multi-select step: 다음 disabled until something is picked
+            for key, val in ALL_OK:
+                page.click(f'.choices[data-q={key}] .opt[data-v={val}]')
+            page.wait_for_selector('.step[data-step=treatment]')
+            check('multi-select step blocks 다음 until a choice', page.is_disabled('#step-next'))
+            page.screenshot(path=str(out / 'light-2-step.png'), full_page=True)
+            page.reload(); page.wait_for_selector('.flowhead')  # a reload starts the flow over
+
+            # a date before the start date is refused the moment it is picked
             page.fill('#close-date', d(8)); page.dispatch_event('#close-date', 'change')
-            for key, val in [('schedule', 'as_promised'), ('workState', 'done'), ('info', 'ontime'), ('safety', 'yes'), ('treatment', 'none')]:
-                page.click(f'.choices[data-q={key}] .choice[data-v={val}]')
-            page.click('#do-close'); page.wait_for_selector('.err', timeout=5000)
-            check('close before start date refused', '일 시작일' in page.inner_text('#view'))
-            page.click('.choices[data-q=treatment] .choice[data-v=none]')  # untoggle so close_day can pick others
-            close_day(d(6), '점심 때 프리랜서만 따로 먹으라고 함')
-            page.wait_for_selector('text=마감했습니다', timeout=5000)
-            check('close succeeds', '마감했습니다' in page.inner_text('#view'))
+            page.wait_for_selector('.toast', timeout=5000)
+            check('close before start date refused at the date step', '일 시작일' in page.inner_text('.toast') and page.input_value('#close-date') == d(0))
+
+            close_day(d(6), ALL_BAD, ['rest', 'info'], '점심 때 프리랜서만 따로 먹으라고 함')
+            check('close succeeds', '마감했습니다' in view())
             anchor_text = page.get_attribute('#share-self', 'data-text')
             check('summary carries seq and fingerprint', '기록번호' in anchor_text and '지문' in anchor_text, anchor_text)
-            close_day(d(5))
-            page.screenshot(path=str(out / 'light-1-today.png'), full_page=True)
+            page.screenshot(path=str(out / 'light-3-done.png'), full_page=True)
+            close_day(d(5), ALL_BAD, ['rest', 'info'])
+            check('hero shows arrears after the pay date', '대금 체불 4일차' in view() and '600,000원' in view(), view()[:200])
+            page.screenshot(path=str(out / 'light-4-today.png'), full_page=True)
 
-            # pay tab: arrears 4 days on 600,000
+            # pay
             page.click('button[data-tab=pay]')
-            txt = page.inner_text('#view')
+            txt = view()
             check('pay shows 대금 체불 4일차', '대금 체불 4일차' in txt, txt[:200])
             check('pay shows 600,000원 due', '600,000원' in txt)
-            page.click('button[data-pay=partial]')
+            page.click('button[data-pay=partial]'); page.fill('#sheet-amount', '200000'); page.click('#sheet-ok')
             page.wait_for_selector('text=400,000원', timeout=5000)
-            txt = page.inner_text('#view')
-            check('partial payment leaves 400,000원 shortfall', '400,000원' in txt and '대금 체불 4일차' in txt)
-            # a fast double tap records once, not twice
+            check('partial payment leaves 400,000원 shortfall', '400,000원' in view() and '대금 체불 4일차' in view())
             page.evaluate("() => { const b = document.querySelector('[data-contact=\"0\"]'); b.click(); b.click(); }")
             page.wait_for_selector('text=연락 시도 1회 무응답', timeout=5000)
             page.wait_for_timeout(300)
-            check('double tap on contact records once', '연락 시도 1회 무응답' in page.inner_text('#view'))
+            check('double tap on contact records once', '연락 시도 1회 무응답' in view())
             page.click('button[data-contact="0"]')
             page.wait_for_selector('text=연락 시도 2회 무응답', timeout=5000)
-            check('contact attempts counted', '연락 시도 2회 무응답' in page.inner_text('#view'))
-            page.click('#add-phone'); page.wait_for_selector('a[href^="tel:"]', timeout=5000)
-            check('number added later shows call link', page.get_attribute('a[href^="tel:"]', 'href') == 'tel:200000')
+            page.click('#add-phone'); page.fill('#sheet-phone', '010-5555-6666'); page.click('#sheet-ok')
+            page.wait_for_selector('a[href^="tel:"]', timeout=5000)
+            check('number added later shows call link', page.get_attribute('a[href^="tel:"]', 'href') == 'tel:01055556666')
             check('adding a number keeps the chain valid', '변조 없음' in page.inner_text('#chain-status'))
-            page.screenshot(path=str(out / 'light-2-pay.png'), full_page=True)
-
-            # correction keeps chain valid and changes the amount
-            page.click('button[data-fix]')  # prompt answers 200000 again -> same amount, still a correction event
+            page.screenshot(path=str(out / 'light-5-pay.png'), full_page=True)
+            page.click('button[data-fix]'); page.click('#sheet-ok')
             page.wait_for_selector('text=정정됨', timeout=5000)
-            check('correction marked', '정정됨' in page.inner_text('#view'))
+            check('correction marked', '정정됨' in view())
 
             # proof
             page.click('button[data-tab=proof]')
-            txt = page.inner_text('#view')
-            check('evidence shows the added number', '상대 연락처' in txt and '200000' in txt)
+            txt = view()
             check('evidence alert line', '대금 체불 4일차' in txt and '연락 시도 2회 무응답' in txt, txt[:300])
             check('backfilled closes marked 사후 기록', txt.count('사후 기록') == 2, str(txt.count('사후 기록')))
+            check('evidence shows the added number', '010-5555-6666' in txt)
             check('private note hidden by default', '따로 먹으라고' not in txt)
             page.check('#inc-notes')
-            check('private note shown when opted in', '따로 먹으라고' in page.inner_text('#view'))
+            check('private note shown when opted in', '따로 먹으라고' in view())
             check('header says no tampering', '변조 없음' in page.inner_text('#chain-status'), page.inner_text('#chain-status'))
             page.fill('#anchor-text', anchor_text); page.click('#do-anchor')
-            check('anchor from summary matches', '일치합니다' in page.inner_text('#view'))
-            page.screenshot(path=str(out / 'light-3-proof.png'), full_page=True)
+            check('anchor from summary matches', '일치합니다' in view())
+            page.screenshot(path=str(out / 'light-6-proof.png'), full_page=True)
 
-            # horizontal overflow at phone width
             for t in ['today', 'promises', 'pay', 'proof']:
                 page.click(f'button[data-tab={t}]')
                 sw = page.evaluate('document.documentElement.scrollWidth')
-                check(f'no horizontal scroll on {t}', sw <= 390, f'scrollWidth={sw}')
+                check(f'no horizontal scroll on {t}', sw <= WIDTH, f'scrollWidth={sw}')
+            page.click('button[data-tab=promises]')
+            page.screenshot(path=str(out / 'light-7-promises.png'), full_page=True)
 
             # double tap on "전액 받음": only the remaining 400,000 is recorded once
             page.click('button[data-tab=pay]')
             page.evaluate("() => { const b = document.querySelector('[data-pay=\"full\"]'); b.click(); b.click(); }")
             page.wait_for_selector('text=지급 완료', timeout=5000)
             page.wait_for_timeout(300)
-            txt = page.inner_text('#view')
+            txt = view()
             check('double tap on full payment records the shortfall once', '1,000,000원' not in txt and txt.count('400,000원 받음') == 1, txt[:400])
 
-            # hourly promise: more than 24 hours is refused
-            page.click('button[data-tab=promises]')
-            page.fill('#f-site', '시급 현장'); page.fill('#f-counterpart', '△△'); page.fill('#f-rate', '15000')
-            page.select_option('#f-unit', 'hour'); page.fill('#f-paydate', d(0)); page.fill('#f-start', d(3))
-            page.click('#do-promise'); page.wait_for_selector('#do-close', timeout=5000)
-            page.fill('#close-hours', '25')
-            for key, val in [('schedule', 'as_promised'), ('workState', 'done'), ('info', 'ontime'), ('safety', 'yes'), ('treatment', 'none')]:
-                page.click(f'.choices[data-q={key}] .choice[data-v={val}]')
-            page.click('#do-close'); page.wait_for_selector('.err', timeout=5000)
-            check('25 hours refused', '일한 시간(0~24)' in page.inner_text('#view'))
+            # hourly promise: more than 24 hours is refused at the hours step
+            create_promise('시급 현장', '△△', 15000, d(0), d(3), unit='hour')
+            page.fill('#close-hours', '25'); page.click('#step-next')
+            page.wait_for_selector('.toast', timeout=5000)
+            check('25 hours refused', '0~24' in page.inner_text('.toast') and page.query_selector('#close-hours') is not None)
 
-            # pay-date timing: before -> no question/no red line; on the day -> question, neutral remainder
-            def promise_with_payday(name, paydate, phone=''):
-                page.click('button[data-tab=promises]')
-                page.fill('#f-site', name); page.fill('#f-counterpart', name); page.fill('#f-rate', '100000')
-                if phone: page.fill('#f-phone', phone)
-                page.fill('#f-paydate', paydate); page.fill('#f-start', d(1))
-                page.click('#do-promise'); page.wait_for_selector('#do-close', timeout=5000)
-                page.fill('#close-date', d(0)); page.dispatch_event('#close-date', 'change')
-                for key, val in [('schedule', 'as_promised'), ('workState', 'done'), ('info', 'ontime'), ('safety', 'yes'), ('treatment', 'none')]:
-                    page.click(f'.choices[data-q={key}] .choice[data-v={val}]')
-                page.click('#do-close'); page.wait_for_selector('.done', timeout=5000)
+            # pay-date timing
+            def promise_and_close(name, paydate, phone=''):
+                create_promise(name, name, 100000, paydate, d(1), phone=phone)
+                close_day(d(0), ALL_OK, ['none'])
                 page.click('button[data-tab=pay]')
-                return page.inner_text('#view')
-            txt = promise_with_payday('미래무번호', d(-30))
+                return view()
+            txt = promise_and_close('미래무번호', d(-30))
+            check('before pay date: no question, no red shortfall', '약속한 돈 받으셨나요' not in txt and '못 받은 돈' not in txt and '받을 예정' in txt and '여쭤볼게요' in txt, txt[:300])
             check('before pay date, no phone: no contact box', '연락 시도' not in txt and '상대 연락처' not in txt, txt[-200:])
-            txt = promise_with_payday('미래지급', d(-30), '010-2222-3333')
+            txt = promise_and_close('미래지급', d(-30), '010-2222-3333')
             check('before pay date with phone: number only, no attempt log', '010-2222-3333' in txt and '응답 없음' not in txt and '연락 시도' not in txt, txt[-250:])
             check('call link dials the number', page.get_attribute('a[href^="tel:"]', 'href') == 'tel:01022223333')
-            page.screenshot(path=str(out / 'light-4-before-due.png'), full_page=True)
-            check('before pay date: no question, no red shortfall', '약속한 돈 받으셨나요' not in txt and '못 받은 돈' not in txt and '받을 예정' in txt and '여쭤볼게요' in txt, txt[:300])
-            txt = promise_with_payday('오늘지급', d(0))
+            page.screenshot(path=str(out / 'light-8-before-due.png'), full_page=True)
+            txt = promise_and_close('오늘지급', d(0))
             check('on pay date without phone: attempt log + add-number button', '연락 시도' in txt and '상대 연락처 적기' in txt, txt[-250:])
             check('on pay date: question shown, remainder neutral', '약속한 돈 받으셨나요' in txt and '남은 돈' in txt and '못 받은 돈' not in txt and '체불' not in txt, txt[:300])
+
+            # Codex UI round 1: switching promise inside the advance window starts the new promise at question 1
+            page.click('button[data-tab=today]'); page.wait_for_selector('.switcher')
+            page.evaluate("() => { const o = document.querySelector('.choices[data-q=schedule] .opt'); if (o) o.click(); document.querySelectorAll('.switcher [data-pid]')[0].click(); }")
+            page.wait_for_timeout(400)
+            check('promise switch inside the advance window does not skip a question', page.query_selector('.step[data-step=schedule]') is not None or page.query_selector('.donecard') is not None)
+            # Codex UI round 2: re-tapping the promise that is already selected must not skip either
+            page.evaluate("() => { const o = document.querySelector('.choices[data-q=schedule] .opt'); if (o) o.click(); document.querySelector('.switcher [aria-pressed=true]').click(); }")
+            page.wait_for_timeout(400)
+            check('re-selecting the current promise inside the advance window does not skip', page.query_selector('.step[data-step=schedule]') is not None or page.query_selector('.donecard') is not None)
 
             # tamper: edit event #3 directly in IndexedDB, reload -> must be flagged
             page.evaluate("""() => new Promise((res, rej) => {
@@ -176,9 +211,12 @@ with sync_playwright() as p:
             page.reload(); page.wait_for_selector('#view .card')
             st = page.inner_text('#chain-status')
             check('tampering detected after direct DB edit', '변조 의심' in st and '3번' in st, st)
-            check('dialogs used', len(dialogs) >= 2, str(dialogs))
         else:
-            page.screenshot(path=str(out / 'dark-0-empty.png'), full_page=True)
+            page.screenshot(path=str(out / 'dark-0-empty.png'))
+            page.click('#go-new'); page.wait_for_selector('#do-promise')
+            page.fill('#f-counterpart', '다크'); page.fill('#f-rate', '250000'); page.fill('#f-paydate', d(2)); page.fill('#f-start', d(5))
+            page.click('#do-promise'); page.wait_for_selector('.flowhead')
+            page.screenshot(path=str(out / 'dark-1-today.png'), full_page=True)
         ctx.close()
     b.close()
 srv.shutdown()
