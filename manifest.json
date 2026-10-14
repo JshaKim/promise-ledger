@@ -1,0 +1,14 @@
+{
+  "name": "약속장부",
+  "short_name": "약속장부",
+  "description": "약속한 돈을 지키는 하루 마감 일지. 기록은 내 폰에만 저장됩니다.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#eef0ee",
+  "theme_color": "#1f3a52",
+  "lang": "ko",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

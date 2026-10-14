@@ -1,0 +1,6 @@
+{
+  "name": "promise-ledger",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test test/core.test.mjs" }
+}

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f3a52">
+<title>약속장부</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">약속장부</div>
+  <div id="chain-status" class="chain">확인 중…</div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" data-tab="today" aria-selected="true">오늘 마감</button>
+  <button role="tab" data-tab="promises">약속</button>
+  <button role="tab" data-tab="pay">지급</button>
+  <button role="tab" data-tab="proof">증빙</button>
+</nav>
+
+<main id="view" class="view"></main>
+
+<footer class="foot">
+  기록은 이 폰 안에만 저장됩니다. 서버로 보내지 않습니다.
+</footer>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
